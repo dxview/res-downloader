@@ -12,6 +12,12 @@
 
 </div>
 
+> ## 🍴 Fork 说明
+>
+> 本仓库是 [putyy/res-downloader](https://github.com/putyy/res-downloader) 的 fork。
+> 分支策略：`master` 分支保持与上游同步，所有改动在功能分支上进行；
+> 原项目采用 Apache-2.0 开源协议，版权信息见 [LICENSE](./LICENSE)。
+
 ---
 ## 📢 项目状态
 

@@ -919,29 +919,39 @@ const decodeWxFile = (row: appType.MediaInfo, index: number) => {
     window?.$message?.error(t("index.video_decode_no"))
     return
   }
+  const runDecode = (file: string) => {
+    loadingText.value = t("index.video_decode_loading")
+    loading.value = true
+    appApi.wxFileDecode({
+      ...row,
+      filename: file,
+      decodeStr: uint8ArrayToBase64(getDecryptionArray(row.DecodeKey))
+    }).then((res: appType.Res) => {
+      loading.value = false
+      if (res.code === 0) {
+        window?.$message?.error(res.message)
+        return
+      }
+      data.value[index].SavePath = res.data.save_path
+      data.value[index].Status = "done"
+      cacheData()
+      window?.$message?.success(t("index.video_decode_success"))
+    })
+  }
+  // A finished download already knows its file path, so reuse it instead
+  // of asking for the file again. Fall back to the file dialog when the
+  // row has no completed download (e.g. restored from cache).
+  if (row.Status === "done" && row.SavePath) {
+    runDecode(row.SavePath)
+    return
+  }
   appApi.openFileDialog().then((res: appType.Res) => {
     if (res.code === 0) {
       window?.$message?.error(res.message)
       return
     }
     if (res.data.file) {
-      loadingText.value = t("index.video_decode_loading")
-      loading.value = true
-      appApi.wxFileDecode({
-        ...row,
-        filename: res.data.file,
-        decodeStr: uint8ArrayToBase64(getDecryptionArray(row.DecodeKey))
-      }).then((res: appType.Res) => {
-        loading.value = false
-        if (res.code === 0) {
-          window?.$message?.error(res.message)
-          return
-        }
-        data.value[index].SavePath = res.data.save_path
-        data.value[index].Status = "done"
-        cacheData()
-        window?.$message?.success(t("index.video_decode_success"))
-      })
+      runDecode(res.data.file)
     }
   })
 }

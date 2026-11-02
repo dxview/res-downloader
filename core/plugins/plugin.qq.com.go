@@ -51,6 +51,16 @@ func (p *QqPlugin) OnResponse(resp *http.Response, ctx *goproxy.ProxyCtx) *http.
 	host := resp.Request.Host
 	Path := resp.Request.URL.Path
 
+	// Channels data APIs return the same objectDesc JSON the page model
+	// uses. Extract it directly from JSON responses so capture no longer
+	// depends solely on the injected JS hooks below (those break silently
+	// when WeChat renames a bundle or a function). The JS hooks stay as a
+	// fallback for pages whose data does not flow through a JSON response.
+	if strings.HasSuffix(host, "channels.weixin.qq.com") &&
+		strings.Contains(resp.Header.Get("Content-Type"), "json") {
+		p.extractWxApiObjects(resp)
+	}
+
 	classify, _ := p.bridge.TypeSuffix(resp.Header.Get("Content-Type"))
 	if classify == "video" && strings.HasSuffix(host, "finder.video.qq.com") {
 		if strings.Contains(resp.Request.Header.Get("Origin"), "mp.weixin.qq.com") {
@@ -117,6 +127,61 @@ func (p *QqPlugin) OnResponse(resp *http.Response, ctx *goproxy.ProxyCtx) *http.
 	}
 
 	return nil
+}
+
+// extractWxApiObjects scans a Channels JSON API response for objectDesc
+// structures and reports each one as a downloadable resource, the same way
+// the injected JS hooks do. The response body is always restored so the
+// browser still receives the full, unmodified response. Oversized bodies
+// are skipped rather than buffered in full.
+func (p *QqPlugin) extractWxApiObjects(resp *http.Response) {
+	const maxWxApiBody = 32 << 20
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxWxApiBody+1))
+	if err != nil {
+		return
+	}
+	resp.Body = io.NopCloser(bytes.NewBuffer(body))
+	resp.ContentLength = int64(len(body))
+	resp.Header.Set("Content-Length", strconv.Itoa(len(body)))
+
+	if len(body) > maxWxApiBody {
+		return
+	}
+
+	var root interface{}
+	if err := json.Unmarshal(body, &root); err != nil {
+		return
+	}
+	p.walkWxApiValue(root)
+}
+
+// walkWxApiValue reports every objectDesc-shaped value in a decoded JSON
+// tree. A map is objectDesc-shaped when it carries an "objectDesc" key or
+// when it carries a "media" list itself. handleMedia ignores anything that
+// lacks a usable media URL and drops URLs it has already seen, so a
+// slightly loose match here is safe.
+func (p *QqPlugin) walkWxApiValue(v interface{}) {
+	switch node := v.(type) {
+	case map[string]interface{}:
+		if desc, ok := node["objectDesc"].(map[string]interface{}); ok {
+			if raw, err := json.Marshal(desc); err == nil {
+				go p.handleMedia(raw)
+			}
+		}
+		if _, ok := node["media"].([]interface{}); ok {
+			if raw, err := json.Marshal(node); err == nil {
+				go p.handleMedia(raw)
+			}
+		}
+		for _, val := range node {
+			p.walkWxApiValue(val)
+		}
+	case []interface{}:
+		for _, item := range node {
+			p.walkWxApiValue(item)
+		}
+	}
 }
 
 func (p *QqPlugin) handleWechatRequest(r *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
